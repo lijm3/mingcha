@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist*/
+.venv/
+venv/
+.pytest_cache/
+# 明察运行产物（覆盖式输出目录）
+mingcha-out/
+*-out/
+answer.json
+frames_meta.txt

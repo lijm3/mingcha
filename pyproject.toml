@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mingcha"
+version = "0.1.0"
+description = "明察 (MingCha) — 看懂/看准/看住视频的多模型 AI 智能体，构建在 claude-real-video 之上"
+requires-python = ">=3.10"
+dependencies = [
+  "requests>=2.28.0",
+  "pydantic>=2.0",
+  "yt-dlp>=2024.1.0",
+  "Pillow>=9.0.0",
+]
+
+# 明察完全自包含，不依赖 crv：取视频/转写/音频已内化进 media.py。
+# 系统依赖 ffmpeg / ffprobe 需在 PATH（非 pip 可装）；whisper 转写为可选 extra。
+[project.optional-dependencies]
+whisper = ["openai-whisper>=20231117"]
+clip = []  # 预留：VISUAL_LOCATE 的 CLIP 初筛器（P4，引 torch，暂空）
+
+[project.scripts]
+mingcha = "mingcha.cli:main"
+mc = "mingcha.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
