@@ -176,7 +176,18 @@ def make_grids_timed(frames_dir: str, out_dir: str, label_map: dict[str, str] | 
 
 # ---- 编排 ----
 def run(source: str, out_dir: str, plan: Plan, *, cookies: str | None = None,
-        cookies_from_browser: str | None = None, want_grids: bool = True) -> PreprocessResult:
+        cookies_from_browser: str | None = None, want_grids: bool = True,
+        progress=None, cancel=None) -> PreprocessResult:
+    """预处理主编排。progress(state, fraction, note) 可选回调，把内部各步细粒度进度
+    上报给上层（后端 SSE）；为 None 时静默（CLI 行为不变）。cancel() 返回 True 则中止。"""
+    def emit(state: str, frac: float, note: str) -> None:
+        if progress:
+            progress(state, frac, note)
+
+    def check_cancel() -> None:
+        if cancel:
+            cancel()
+
     out_dir = os.path.abspath(out_dir)
     os.makedirs(out_dir, exist_ok=True)
     frames_dir = os.path.join(out_dir, "frames")
@@ -187,12 +198,17 @@ def run(source: str, out_dir: str, plan: Plan, *, cookies: str | None = None,
         shutil.rmtree(stale, ignore_errors=True)
 
     # ① 取视频（复用 crv）
+    check_cancel()
+    emit("downloading", 0.12, "取视频中…")
     video = fetch_video(source, out_dir, cookies=cookies,
                         cookies_from_browser=cookies_from_browser)
     dur = duration(video)
+    emit("extracting", 0.2, f"取视频完成（时长约 {dur}s），开始抽帧…")
 
     # ② 带时间戳抽帧
+    check_cancel()
     n_raw, meta_path = extract_frames_timed(video, frames_dir, plan.scene, plan.fps_floor)
+    emit("extracting", 0.4, f"抽帧完成：{n_raw} 帧，去重中…")
 
     # ③ 解析时间戳 + 段数校验兜底（NFR-1 诚实）
     raw_stamps = timestamps.raw_stamp_map(meta_path)
@@ -204,10 +220,13 @@ def run(source: str, out_dir: str, plan: Plan, *, cookies: str | None = None,
                    f"改用 index×fps_floor 近似，时间点可能有偏差。")
 
     # ④ 带时间戳去重
+    check_cancel()
     kept, _records, kept_stamps = dedup_timed(
         frames_dir, raw_stamps, threshold=plan.dedup_threshold, max_frames=plan.max_frames)
+    emit("extracting", 0.5, f"去重后保留 {kept} 帧（自 {n_raw}）")
 
     # ⑤ 转写（复用 crv 三级回退：sidecar/内嵌字幕 → whisper）
+    check_cancel()
     transcript = existing_subtitles(source, video, out_dir)
     if transcript:
         note = f"{transcript} (from the video's own subtitles)"
@@ -216,6 +235,7 @@ def run(source: str, out_dir: str, plan: Plan, *, cookies: str | None = None,
     elif not has_audio(video):
         note = "(none — this video has no subtitles and no audio track)"
     else:
+        emit("transcribing", 0.55, "whisper 转写中（较慢，请耐心等待）…")
         transcript = transcribe(video, out_dir, "auto")
         note = (f"{transcript} (transcribed by whisper)" if transcript
                 else "(none — transcription failed)")
@@ -233,6 +253,7 @@ def run(source: str, out_dir: str, plan: Plan, *, cookies: str | None = None,
         if plan.grid_label_time and kept_stamps:
             label_map = {f: timestamps.hms(t) for f, t in kept_stamps.items()}
         grids = make_grids_timed(frames_dir, out_dir, label_map)
+    emit("extracting", 0.65, f"预处理完成：{kept} 帧 | 拼图 {len(grids)}")
 
     return PreprocessResult(
         out_dir=out_dir, video=video, duration=dur, frames_dir=frames_dir,

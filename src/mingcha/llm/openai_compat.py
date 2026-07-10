@@ -6,6 +6,9 @@
 from __future__ import annotations
 
 from .base import LLMProvider, LLMResult, LLMRefusal, encode_image, post_with_retry
+from .._log import get_logger
+
+log = get_logger("mingcha.llm")
 
 
 class OpenAICompatProvider(LLMProvider):
@@ -31,10 +34,14 @@ class OpenAICompatProvider(LLMProvider):
             body["response_format"] = {"type": "json_schema",
                                        "json_schema": {"name": "structured_output",
                                                        "schema": json_schema}}
-        data = post_with_retry(f"{self.base_url}/v1/chat/completions", headers, body)
+        log.debug("openai_compat 调用 model=%s images=%d schema=%s max_tokens=%d",
+                  self.model, len(images), bool(json_schema), max_tokens)
+        data = post_with_retry(f"{self.base_url}/v1/chat/completions", headers, body,
+                               label=f"{self.name}:{self.model}")
         choice = data["choices"][0]
         # §6.7 拒答映射：内容过滤 → 不重试，交上层转「建议人工复核」
         if choice.get("finish_reason") == "content_filter":
+            log.warning("openai_compat %s 拒答（finish_reason=content_filter）", self.model)
             raise LLMRefusal(f"{self.name}:{self.model} 拒答（finish_reason=content_filter）")
         text = choice["message"]["content"]
         return LLMResult(text=text, usage=data.get("usage", {}),

@@ -51,6 +51,11 @@ def fetch_video(src: str, out_dir: str, cookies: str | None = None,
     else:
         if not os.path.exists(src):
             raise FileNotFoundError(src)
+        # 本地源恰好已在输出目录且就是 source.mp4（如后端把上传直接存到任务目录）时，
+        # 源=目标会触发 SameFileError；此时无需复制，直接用它。
+        if os.path.abspath(src) == os.path.abspath(dest) or (
+                os.path.exists(dest) and os.path.samefile(src, dest)):
+            return src
         shutil.copy(src, dest)
     return dest
 

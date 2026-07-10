@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mingcha-backend"
+version = "0.1.0"
+description = "明察 MingCha 前后端分离 —— FastAPI 异步任务服务层"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "python-multipart>=0.0.9",   # multipart 上传
+  # 内核（本地 path 安装）：pip install -e ./src 或 -e .
+  # static-ffmpeg / yt-dlp / openai-whisper 见启动文档，按需装
+]
+
+[project.optional-dependencies]
+ffmpeg = ["static-ffmpeg>=2.5"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]

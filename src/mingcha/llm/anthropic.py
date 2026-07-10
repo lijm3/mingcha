@@ -10,8 +10,11 @@ import json
 from .base import (
     LLMProvider, LLMResult, LLMRefusal, encode_image, post_with_retry,
 )
+from .._log import get_logger
 
 _CACHE_CONTROL = {"type": "ephemeral"}
+
+log = get_logger("mingcha.llm")
 
 
 class AnthropicProvider(LLMProvider):
@@ -54,10 +57,14 @@ class AnthropicProvider(LLMProvider):
                               "input_schema": json_schema}]
             body["tool_choice"] = {"type": "tool", "name": "structured_output"}
 
-        data = post_with_retry(f"{self.base_url}/v1/messages", headers, body)
+        log.debug("anthropic 调用 model=%s images=%d schema=%s max_tokens=%d",
+                  self.model, len(list(images)), bool(json_schema), max_tokens)
+        data = post_with_retry(f"{self.base_url}/v1/messages", headers, body,
+                               label=f"{self.name}:{self.model}")
 
         # §6.7 拒答映射：不重试原 prompt，交上层转「建议人工复核」
         if data.get("stop_reason") == "refusal":
+            log.warning("anthropic %s 拒答（stop_reason=refusal）", self.model)
             raise LLMRefusal(f"{self.name}:{self.model} 拒答（stop_reason=refusal）")
 
         if json_schema:

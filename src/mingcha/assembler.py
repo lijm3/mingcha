@@ -78,7 +78,8 @@ def from_visual(query_image: str, desc: str, verdict: str, frame: str, t: float,
     """VISUAL_LOCATE 命中：区分 same/similar，相似≠同一时降级措辞与 confidence（R-5）。"""
     hms = timestamps.hms(t)
     ev = Evidence(frame=os.path.basename(frame), t=round(t, 3), hms=hms,
-                  confidence=round(confidence, 3), similarity=round(similarity, 3), note=note)
+                  confidence=round(confidence, 3), similarity=round(similarity, 3),
+                  verdict=verdict, note=note)
     if verdict == "same":
         head = f"参考图中的对象最早出现在 {hms}（约第 {t:.1f} 秒）。"
     else:  # similar

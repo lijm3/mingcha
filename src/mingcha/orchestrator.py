@@ -8,29 +8,54 @@ import json
 import os
 import shutil
 
-from . import assembler, intent as intent_mod, planner, preprocess
+from . import assembler, config, intent as intent_mod, planner, preprocess
 from .types import Answer, Intent
 
 _CACHE_FILE = ".mingcha_cache.json"
 
 
+class TaskCancelled(Exception):
+    """用户主动取消任务时抛出，被 service 层捕获转为 cancelled 状态。"""
+
+
 class Orchestrator:
     def __init__(self, *, provider: str | None = None, vision_model: str | None = None,
-                 classify_model: str | None = None):
+                 classify_model: str | None = None,
+                 runtime_keys: dict[str, str] | None = None):
         # provider: 一次性把所有角色切到某家（如 'glm'）；分角色 override 优先级更高。
         self.vision_model = vision_model or provider
         self.classify_model = classify_model or provider
+        # runtime_keys: 界面/请求级注入的 provider key（§7.3），优先级高于环境变量。
+        self.runtime_keys = runtime_keys
 
     def ask(self, source: str, prompt: str, query_image: str | None = None, *,
             out_dir: str = "mingcha-out", cookies: str | None = None,
-            cookies_from_browser: str | None = None, use_cache: bool = True) -> Answer:
+            cookies_from_browser: str | None = None, use_cache: bool = True,
+            progress=None, cancel=None) -> Answer:
+        # 请求级 Key 注入（CLI 不传则为 None，行为完全不变）
+        if self.runtime_keys is not None:
+            config.set_runtime_keys(self.runtime_keys)
+
+        def emit(state: str, frac: float, note: str = ""):
+            """进度事件：有 progress 回调走回调（后端 SSE），否则 print（CLI 行为不变）。"""
+            if progress:
+                progress(state, frac, note)
+            else:
+                print(note or state)
+
+        def check_cancel():
+            if cancel and cancel():
+                raise TaskCancelled("任务已被取消")
+
         # ⓪ 输入校验（FR-1.5）：源不可达 / 图片不可读 → 明确报错，不静默
         self._validate(source, query_image)
 
         # ① 分类（FR-2）
+        check_cancel()
         ir = intent_mod.classify(prompt, has_image=query_image is not None,
                                  classify_model=self.classify_model)
-        print(f"意图: {[i.value for i in ir.intents]}  target={ir.target or '-'}  ({ir.reason})")
+        emit("classifying", 0.02,
+             f"意图: {[i.value for i in ir.intents]}  target={ir.target or '-'}  ({ir.reason})")
 
         # ② 规划（FR-3）
         pl = planner.plan(ir.intents)
@@ -40,31 +65,45 @@ class Orchestrator:
         if use_cache:
             cached = self._load_cached(out_dir, key)
             if cached is not None:
-                print("命中缓存：复用上次结果（--no-cache 可强制重算）。")
+                emit("done", 1.0, "命中缓存：复用上次结果（--no-cache 可强制重算）。")
                 return cached
 
         # ③ 预处理：取视频/转写/音频 + 明察自写的时间戳链路
+        check_cancel()
+        emit("downloading", 0.1, "取视频与预处理…")
         pre = preprocess.run(source, out_dir, pl, cookies=cookies,
-                             cookies_from_browser=cookies_from_browser)
-        print(f"预处理: {pre.frame_count} 帧（去重自 {pre.extracted}）| 拼图 {len(pre.grids)} | "
-              f"转写 {pre.transcript_note}")
+                             cookies_from_browser=cookies_from_browser,
+                             progress=emit, cancel=check_cancel)
+        emit("extracting", 0.7,
+             f"预处理: {pre.frame_count} 帧（去重自 {pre.extracted}）| 拼图 {len(pre.grids)} | "
+             f"转写 {pre.transcript_note}")
         if pre.caveats:
-            print(f"  ⚠ {pre.caveats}")
+            emit("extracting", 0.7, f"⚠ {pre.caveats}")
 
         # FR-1.3：把参考图复制进产物目录，answer 里回显其归档路径
         query_copy = None
         if query_image:
             query_copy = os.path.join(pre.out_dir, "query_image.jpg")
-            shutil.copy(query_image, query_copy)
+            # 源恰好已是该目标（后端把上传参考图直接存进任务目录）时跳过复制，避免 SameFileError
+            if not (os.path.abspath(query_image) == os.path.abspath(query_copy) or
+                    (os.path.exists(query_copy) and
+                     os.path.samefile(query_image, query_copy))):
+                shutil.copy(query_image, query_copy)
+            else:
+                query_copy = query_image
 
         # ④ 分析（按意图分发）
+        check_cancel()
+        emit("analyzing", 0.75, "多模型分析中…")
         ans = self._dispatch(ir, pl, pre, prompt, query_copy or query_image)
         if pre.caveats and not ans.caveats:
             ans.caveats = pre.caveats
 
         # ⑤ 组装 + 落盘 answer.json（FR-6）+ 写缓存指纹
+        emit("assembling", 0.95, "组装结果…")
         result = assembler.write(ans, pre.out_dir)
         self._save_cache(pre.out_dir, key)
+        emit("done", 1.0, "完成。")
         return result
 
     # ---- NFR-6 缓存复用 ----

@@ -51,6 +51,7 @@ class Evidence(BaseModel):
     hms: str
     confidence: float
     similarity: float | None = None  # 仅 VISUAL_LOCATE
+    verdict: str | None = None       # 仅 VISUAL_LOCATE: "same"|"similar"，供前端徽章区分同一个体/同类外观
     note: str = ""
 
 
@@ -59,6 +60,9 @@ class Answer(BaseModel):
     target: str | None = None
     query_image: str | None = None
     answer: str
+    topic: str = ""                 # 仅 SUMMARY：主题/一句话概括（来自 SummarySchema.topic）
+    segments: list[str] = Field(default_factory=list)   # 仅 SUMMARY：分段脉络
+    key_points: list[str] = Field(default_factory=list)  # 仅 SUMMARY：关键要点
     evidence: list[Evidence] = Field(default_factory=list)
     confidence: float = 0.0
     caveats: str = ""               # NFR-1 采样局限；否定结论必填非空

@@ -15,6 +15,9 @@ from concurrent.futures import ThreadPoolExecutor
 from ..config import JUDGE_MAX_WORKERS
 from .base import ImageRef, LLMRefusal
 from .structured import structured
+from .._log import get_logger
+
+log = get_logger("mingcha.llm")
 
 
 def judge_frames_batch(provider, system: str, frames_with_time, schema, *,
@@ -32,11 +35,13 @@ def judge_frames_batch(provider, system: str, frames_with_time, schema, *,
             obj, _ = structured(provider, system, [ImageRef(path)], instruction, schema)
             return idx, path, t, obj
         except LLMRefusal:
+            log.warning("逐帧 #%d %s 模型拒答，标注人工复核", idx, path)
             obj = schema()
             if hasattr(obj, "note"):
                 obj.note = "模型拒答（内容安全过滤），建议人工复核"
             return idx, path, t, obj
         except Exception as e:  # noqa: BLE001 —— 单帧失败不拖垮整批
+            log.warning("逐帧 #%d %s 判定失败: %s: %s", idx, path, type(e).__name__, e)
             obj = schema()
             if hasattr(obj, "note"):
                 obj.note = f"判定失败（{type(e).__name__}）"

@@ -11,3 +11,17 @@ mingcha-out/
 *-out/
 answer.json
 frames_meta.txt
+
+# 前后端分离新增
+# 后端任务产物根目录（含上传视频、含明文车牌的 answer.json 等，勿入库）
+data/
+node_modules/
+# 前端构建产物（发布时可单独打包，不入版本库）
+frontend/dist/
+.env
+*.tsbuildinfo
+
+# provider 密钥覆盖文件（含明文 key，绝不入库；仅保留 .example 模板）
+.crv/providers.yaml
+.crv/providers.yml
+.crv/providers.json

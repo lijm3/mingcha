@@ -11,6 +11,9 @@ import re
 from pydantic import BaseModel, ValidationError
 
 from .base import LLMProvider, LLMResult, Msg
+from .._log import get_logger
+
+log = get_logger("mingcha.llm")
 
 
 def _loads_lenient(blob: str) -> dict:
@@ -80,7 +83,14 @@ def structured(provider: LLMProvider, system: str, images, instruction: str,
         return schema.model_validate(_extract_json(r.text)), r
     except (ValidationError, ValueError) as e:
         # 失败回灌重试 1 次（对任意 provider 都有效）
+        log.warning("结构化输出解析失败（%s），回灌重试 1 次。原始响应前 200 字符: %r",
+                    e, (r.text or "")[:200])
         fix = (instruction + f"\n\n上次输出无法解析或不符合 schema（错误：{e}）。"
                "请只输出符合以下 schema 的合法 JSON：\n" + json.dumps(js, ensure_ascii=False))
         r2 = provider.chat(system=system, images=images, messages=[Msg("user", fix)])
-        return schema.model_validate(_extract_json(r2.text)), r2
+        try:
+            return schema.model_validate(_extract_json(r2.text)), r2
+        except (ValidationError, ValueError) as e2:
+            log.error("结构化输出重试后仍失败（%s）。响应前 200 字符: %r",
+                      e2, (r2.text or "")[:200])
+            raise

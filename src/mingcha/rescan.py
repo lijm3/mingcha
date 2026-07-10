@@ -37,8 +37,13 @@ def dense_extract(source_video: str, out_dir: str, t0: float, t1: float,
     vf = (f"fps=1/{step},"
           f"metadata=print:file=rescan_meta.txt,"
           f"scale={scale_width}:-1")
+    # ⚠️ 用 -t 时长 而非 -to 绝对时间：`-ss` 置于 `-i` 前时，不同 ffmpeg 版本对 `-to`
+    # 的语义不一致（有的当绝对结束、有的当"再持续多少秒"），后者会把区间放大到几百秒、
+    # 精扫抽出上百帧 → 逐帧判定次数爆炸（曾导致以图搜跑满 30 分钟超时）。
+    # 用 -t (t1 - t0) 明确表达"从 t0 起抽 (t1-t0) 秒"，跨版本一致。
+    dur = t1 - t0
     subprocess.run(
-        ["ffmpeg", "-ss", f"{t0:.3f}", "-to", f"{t1:.3f}", "-i", os.path.abspath(source_video),
+        ["ffmpeg", "-ss", f"{t0:.3f}", "-t", f"{dur:.3f}", "-i", os.path.abspath(source_video),
          "-vf", vf, "-fps_mode", "vfr", "rescan_%05d.jpg",
          "-hide_banner", "-loglevel", "error"],
         cwd=rescan_dir, capture_output=True, text=True)
@@ -46,6 +51,20 @@ def dense_extract(source_video: str, out_dir: str, t0: float, t1: float,
     frames = sorted(glob.glob(os.path.join(rescan_dir, "rescan_*.jpg")))
     if not frames:
         return []
+    # 安全兜底：正常区间(2*window/step)只有几十帧；若因异常抽出过多帧，截断并告警，
+    # 避免逐帧判定次数失控。
+    max_expected = int(dur / step) + 5
+    if len(frames) > max_expected * 3:
+        from ._log import get_logger
+        get_logger("mingcha").warning(
+            "精扫抽帧异常：区间 %.1fs 抽出 %d 帧（预期约 %d），已截断到前 %d 帧。",
+            dur, len(frames), max_expected, max_expected)
+        for extra in frames[max_expected:]:
+            try:
+                os.remove(extra)
+            except OSError:
+                pass
+        frames = frames[:max_expected]
 
     # 相对区间起点的 pts_time；回加 t0 还原绝对时间
     rel = timestamps.parse_meta(os.path.join(rescan_dir, "rescan_meta.txt"))
