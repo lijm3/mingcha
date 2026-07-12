@@ -8,7 +8,7 @@ from pydantic import BaseModel
 
 TaskState = Literal["queued", "downloading", "extracting", "transcribing",
                     "analyzing", "assembling", "done", "error", "cancelled"]
-IntentName = Literal["auto", "SUMMARY", "LOCATE", "MODERATE", "VISUAL_LOCATE"]
+IntentName = Literal["auto", "SUMMARY", "LOCATE", "MODERATE", "VISUAL_LOCATE", "PLATE"]
 
 
 class ProviderOverride(BaseModel):
@@ -42,6 +42,13 @@ class TaskStatus(BaseModel):
     caveats: str = ""
 
 
+class BBoxOut(BaseModel):                # 仅 PLATE：车牌在代表帧的像素框（原分辨率坐标系）
+    x: int
+    y: int
+    w: int
+    h: int
+
+
 class EvidenceOut(BaseModel):
     frame: str
     frame_url: str                       # /artifacts/{id}/frames/frame_007.jpg?token=
@@ -51,12 +58,32 @@ class EvidenceOut(BaseModel):
     similarity: float | None = None      # 仅 VISUAL_LOCATE
     verdict: str | None = None           # 仅 VISUAL_LOCATE: "same"|"similar"
     note: str = ""
+    # —— 仅 PLATE：空间证据 ——
+    bbox: BBoxOut | None = None
+    track_id: int | None = None
+    plate_text: str | None = None
+    plate_color: str | None = None
 
 
 class SummaryDetail(BaseModel):          # 仅 SUMMARY：三段式结构化
     topic: str = ""
     segments: list[str] = []
     key_points: list[str] = []
+
+
+class PlateTrackOut(BaseModel):          # 仅 PLATE：一条车牌/车辆轨迹（前端轨迹列表）
+    track_id: int
+    plate_text: str
+    label: str = ""                      # 展示标签：车牌号，或车辆模式无牌时「车辆N」
+    confidence: float
+    plate_color: str | None = None
+    first_t: float
+    last_t: float
+    hms_range: str = ""                  # "00:00:03–00:00:07"，前端直显
+    n_frames: int = 0
+    method: str = "vote"                 # vote|rule_fixed|superres|vlm_corrected
+    best_frame_url: str = ""             # 代表帧（最清晰）缩略图 URL
+    caveats: str = ""
 
 
 class AnswerOut(BaseModel):
@@ -67,9 +94,12 @@ class AnswerOut(BaseModel):
     evidence: list[EvidenceOut] = []
     confidence: float = 0.0
     caveats: str = ""
-    video_url: str | None = None         # 供播放器跳转
+    video_url: str | None = None         # 供播放器跳转（PLATE 下为原视频，标注视频见下）
     query_image_url: str | None = None   # 仅 VISUAL_LOCATE：参考图回显
     grids: list[str] = []                # 拼图 URL
+    # —— 仅 PLATE ——
+    annotated_video_url: str | None = None        # 高亮标注视频（框跟随移动 + 车牌号）
+    plate_tracks: list[PlateTrackOut] = []
 
 
 class HealthOut(BaseModel):

@@ -8,6 +8,7 @@ from .types import Intent, IntentResult
 _LOCATE_KW = ("什么时间", "第几秒", "最早", "出现在", "何时", "几分几秒", "时间点", "定位")
 _MODERATE_KW = ("有没有", "是否", "检测", "包含", "有无", "存在吗", "审核")
 _SUMMARY_KW = ("总结", "讲了什么", "概括", "主要内容", "介绍一下", "说了什么", "讲的是", "内容是")
+_PLATE_KW = ("车牌", "车牌号", "牌照", "车号", "识别车牌", "高亮车牌", "标注车牌")
 
 
 def _rule_based(prompt: str, has_image: bool) -> IntentResult | None:
@@ -15,6 +16,10 @@ def _rule_based(prompt: str, has_image: bool) -> IntentResult | None:
         return IntentResult(intents=[Intent.VISUAL_LOCATE],
                             reason="含参考图，强信号 → VISUAL_LOCATE")
     p = prompt or ""
+    # PLATE 置于 LOCATE/MODERATE 之前：「识别/标注车牌」不应被 MODERATE「识别/检测」抢走
+    if any(k in p for k in _PLATE_KW):
+        return IntentResult(intents=[Intent.PLATE], target=p,
+                            return_scope="all_ranges", reason="命中车牌关键词")
     if any(k in p for k in _LOCATE_KW):
         return IntentResult(intents=[Intent.LOCATE], target=p,
                             return_scope="earliest", reason="命中定位关键词")

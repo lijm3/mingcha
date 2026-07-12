@@ -1,6 +1,6 @@
 import { useRef } from 'react'
 import { useStore } from '../store/store'
-import type { AnswerOut, EvidenceOut } from '../types'
+import type { AnswerOut, EvidenceOut, PlateTrackOut } from '../types'
 
 export function ResultView() {
   const { answer } = useStore()
@@ -36,8 +36,18 @@ export function ResultView() {
         <p className="answer-text">{answer.answer}</p>
       )}
 
-      {answer.video_url && (
-        <video ref={videoRef} className="player" src={answer.video_url} controls preload="metadata" />
+      {(answer.annotated_video_url || answer.video_url) && (
+        <video
+          ref={videoRef}
+          className="player"
+          src={answer.annotated_video_url || answer.video_url || undefined}
+          controls
+          preload="metadata"
+        />
+      )}
+
+      {answer.plate_tracks.length > 0 && (
+        <PlateTrackList tracks={answer.plate_tracks} onSeek={seek} />
       )}
 
       {answer.evidence.length > 0 && (
@@ -89,6 +99,7 @@ function EvidenceList({ evidence, onSeek }: { evidence: EvidenceOut[]; onSeek: (
           <div className="evidence-card" key={i} onClick={() => onSeek(ev.t)}>
             <img src={ev.frame_url} loading="lazy" alt={ev.hms} />
             <div className="ev-meta">
+              {ev.plate_text && <span className="plate-no">{ev.plate_text}</span>}
               <span className="badge">{ev.hms}</span>
               <span className="conf">置信 {(ev.confidence * 100).toFixed(0)}%</span>
               {ev.similarity != null && <span className="sim">相似 {(ev.similarity * 100).toFixed(0)}%</span>}
@@ -99,6 +110,32 @@ function EvidenceList({ evidence, onSeek }: { evidence: EvidenceOut[]; onSeek: (
               )}
             </div>
             {ev.note && <p className="note">{ev.note}</p>}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function PlateTrackList({ tracks, onSeek }: { tracks: PlateTrackOut[]; onSeek: (t: number) => void }) {
+  const methodLabel: Record<string, string> = {
+    vote: '多帧投票', rule_fixed: '规则校正', superres: '超分', vlm_corrected: 'VLM 纠正',
+  }
+  return (
+    <div className="plate-list">
+      <h4>追踪到的车辆 / 车牌（点击跳转到出现时间）</h4>
+      <div className="plate-grid">
+        {tracks.map((tk) => (
+          <div className="plate-card" key={tk.track_id} onClick={() => onSeek(tk.first_t)}>
+            {tk.best_frame_url && <img src={tk.best_frame_url} loading="lazy" alt={tk.plate_text} />}
+            <div className="plate-meta">
+              <span className="plate-no">{tk.label || tk.plate_text}</span>
+              {tk.plate_color && <span className="plate-color">{tk.plate_color}</span>}
+              <span className="badge">{tk.hms_range}</span>
+              <span className="conf">置信 {(tk.confidence * 100).toFixed(0)}%</span>
+              <span className="method">{methodLabel[tk.method] || tk.method}</span>
+            </div>
+            {tk.caveats && <p className="note">{tk.caveats}</p>}
           </div>
         ))}
       </div>

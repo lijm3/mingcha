@@ -73,6 +73,7 @@ class Orchestrator:
         emit("downloading", 0.1, "取视频与预处理…")
         pre = preprocess.run(source, out_dir, pl, cookies=cookies,
                              cookies_from_browser=cookies_from_browser,
+                             want_grids=Intent.PLATE not in pl.intents,  # PLATE 不走拼图范式
                              progress=emit, cancel=check_cancel)
         emit("extracting", 0.7,
              f"预处理: {pre.frame_count} 帧（去重自 {pre.extracted}）| 拼图 {len(pre.grids)} | "
@@ -95,7 +96,7 @@ class Orchestrator:
         # ④ 分析（按意图分发）
         check_cancel()
         emit("analyzing", 0.75, "多模型分析中…")
-        ans = self._dispatch(ir, pl, pre, prompt, query_copy or query_image)
+        ans = self._dispatch(ir, pl, pre, prompt, query_copy or query_image, progress=emit)
         if pre.caveats and not ans.caveats:
             ans.caveats = pre.caveats
 
@@ -159,9 +160,9 @@ class Orchestrator:
             except Exception as e:  # noqa: BLE001
                 raise ValueError(f"参考图无法读取或不是有效图片: {query_image}（{e}）") from e
 
-    def _dispatch(self, ir, pl, pre, prompt, query_image) -> Answer:
+    def _dispatch(self, ir, pl, pre, prompt, query_image, progress=None) -> Answer:
         """按意图分发；多意图（如 SUMMARY+MODERATE）分别分析后合并为一个 Answer（§8）。"""
-        from .analyzer import locate, moderate, summary, visual
+        from .analyzer import locate, moderate, plate, summary, visual
 
         intents = list(dict.fromkeys(ir.intents))  # 去重保序
         target = ir.target or prompt
@@ -179,6 +180,9 @@ class Orchestrator:
                 answers.append(moderate.analyze(pre.out_dir, pl, target, vision_model=vm))
             elif it == Intent.SUMMARY:
                 answers.append(summary.analyze(pre.out_dir, pl, prompt, vision_model=vm))
+            elif it == Intent.PLATE:
+                answers.append(plate.analyze(pre.out_dir, pl, target, pre.video,
+                                             vision_model=vm, progress=progress))
 
         if not answers:  # 例如仅 VISUAL_LOCATE 却无参考图 → 退化为 SUMMARY
             answers.append(summary.analyze(pre.out_dir, pl, prompt, vision_model=vm))
@@ -197,4 +201,7 @@ class Orchestrator:
             query_image=next((a.query_image for a in answers if a.query_image), None),
             answer=body, evidence=evidence,
             confidence=max((a.confidence for a in answers), default=0.0),
-            caveats=caveats, artifacts_dir=answers[0].artifacts_dir)
+            caveats=caveats, artifacts_dir=answers[0].artifacts_dir,
+            # PLATE 产物：多意图合并时取首个非空，避免丢失标注视频与车牌轨迹
+            annotated_video=next((a.annotated_video for a in answers if a.annotated_video), None),
+            plate_tracks=next((a.plate_tracks for a in answers if a.plate_tracks), []))

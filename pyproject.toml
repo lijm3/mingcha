@@ -19,6 +19,17 @@ dependencies = [
 [project.optional-dependencies]
 whisper = ["openai-whisper>=20231117"]
 clip = []  # 预留：VISUAL_LOCATE 的 CLIP 初筛器（P4，引 torch，暂空）
+plate = [                          # 车牌识别栈（FR-5.5），与核心隔离，未装则走可读降级
+  "hyperlpr3>=0.1.0",              # 国产中国车牌检测+识别（onnxruntime 后端，蓝/黄/绿/双层黄）
+  "opencv-python-headless>=4.8",   # 图像裁剪 / 帧读写
+  "onnxruntime-gpu>=1.16",         # GPU 推理；CPU 环境改用 onnxruntime（需与本机 CUDA/cuDNN 匹配）
+  "numpy>=1.24",
+  # 追踪用本子包内置轻量实现（plate/track.py，纯 Python，不引 torch）；
+  # 超分（Real-ESRGAN，§6.7 P5.4）体积大，另拆 [plate-superres]，默认不装。
+]
+vehicle = [                        # 车辆检测追踪（远距离俯拍车牌太小时改追车辆，V 系列）
+  "ultralytics>=8.0",             # YOLOv8 车辆检测（COCO 预训练，首次自动下载权重；引入 torch，较重）
+]
 
 [project.scripts]
 mingcha = "mingcha.cli:main"

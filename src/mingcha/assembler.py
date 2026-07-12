@@ -6,7 +6,7 @@ from __future__ import annotations
 import os
 
 from . import timestamps
-from .types import Answer, Evidence
+from .types import Answer, Evidence, PlateTrack
 
 
 def write(answer: Answer, out_dir: str) -> Answer:
@@ -91,3 +91,92 @@ def from_visual(query_image: str, desc: str, verdict: str, frame: str, t: float,
                   target=desc or None, query_image=os.path.abspath(query_image),
                   answer=head, evidence=[ev], confidence=round(confidence, 3),
                   caveats=caveats, artifacts_dir=os.path.abspath(out_dir))
+
+
+def from_plate(tracks: list[PlateTrack], annotated_video: str | None,
+               out_dir: str, caveats: str) -> Answer:
+    """PLATE 组装（FR-5.5.6 / §8）：每条有效 track 一条 Evidence（代表帧 + bbox + 最终车牌号），
+    全部 track 落 plate_tracks，标注视频路径落 annotated_video。
+
+    无有效 track → 诚实否定（NFR-1），并区分「一辆没检出」与「检出但全模糊」两种情形，
+    caveats 必填非空。有效 = 有车牌号且置信度 > 0。"""
+    abs_out = os.path.abspath(out_dir)
+    if any(getattr(t, "kind", "plate") == "vehicle" for t in tracks):
+        return _from_vehicle(tracks, annotated_video, out_dir, caveats, abs_out)
+    valid = [t for t in tracks if t.plate_text and t.confidence > 0]
+    if not valid:
+        if tracks:  # 检出了车牌区域，但都读不出 → 不硬猜（§0 诚实边界）
+            ans = f"检出 {len(tracks)} 处车牌区域，但均过于模糊，无法可靠识别车牌号。"
+            cav = caveats or "检出车牌区域但清晰度不足；建议提供更清晰的视频或人工复核。"
+        else:
+            ans = "在抽取的关键帧中未检出车牌。"
+            cav = caveats or "受采样密度限制，短暂出现或远处的车牌可能漏检。"
+        return Answer(intent="PLATE", answer=ans, confidence=0.0, caveats=cav,
+                      plate_tracks=tracks, annotated_video=annotated_video,
+                      artifacts_dir=abs_out)
+
+    # 命中：按首次出现时间排序；每条 track 选最清晰帧（ocr_confidence 最高）作代表帧
+    valid.sort(key=lambda t: t.first_t)
+    evidence: list[Evidence] = []
+    parts: list[str] = []
+    for tr in valid:
+        rep = max(tr.detections, key=lambda d: d.ocr_confidence, default=None)
+        evidence.append(Evidence(
+            frame=os.path.basename(rep.frame) if rep else "",
+            t=round(tr.first_t, 3), hms=timestamps.hms(tr.first_t),
+            confidence=round(tr.confidence, 3), bbox=rep.bbox if rep else None,
+            track_id=tr.track_id, plate_text=tr.plate_text, plate_color=tr.plate_color,
+            note=f"{tr.method}·{tr.n_frames}帧" + (f"·{tr.caveats}" if tr.caveats else "")))
+        color = f"，{tr.plate_color}" if tr.plate_color else ""
+        parts.append(f"{tr.plate_text}（{timestamps.hms(tr.first_t)}–{timestamps.hms(tr.last_t)}"
+                     f"{color}，置信 {tr.confidence:.2f}）")
+    ans = f"识别到 {len(valid)} 辆车的车牌：" + "；".join(parts) + "。"
+    return Answer(intent="PLATE", answer=ans, evidence=evidence,
+                  confidence=round(max(t.confidence for t in valid), 3), caveats=caveats,
+                  plate_tracks=tracks, annotated_video=annotated_video, artifacts_dir=abs_out)
+
+
+def _from_vehicle(tracks: list[PlateTrack], annotated_video: str | None,
+                  out_dir: str, caveats: str, abs_out: str) -> Answer:
+    """车辆追踪模式组装：展示所有稳定车辆轨迹（框选跟随），识别出车牌的额外标注车牌号。
+    稳定 = 多帧（能画出跟随）或已识别出车牌；单帧车辆多为误检，不展示。"""
+    valid = [t for t in tracks if t.n_frames >= 2 or (t.plate_text and t.confidence > 0)]
+    if not valid:
+        return Answer(intent="PLATE", answer="未稳定追踪到车辆。", confidence=0.0,
+                      caveats=caveats or "未检出可稳定追踪的车辆（画面过小 / 片段过短）。",
+                      plate_tracks=tracks, annotated_video=annotated_video, artifacts_dir=abs_out)
+    valid.sort(key=lambda t: t.first_t)
+    with_plate = [t for t in valid if t.plate_text and t.confidence > 0]
+    evidence: list[Evidence] = []
+    for tr in valid:
+        rep = max(tr.detections, key=lambda d: d.ocr_confidence, default=None)
+        evidence.append(Evidence(
+            frame=os.path.basename(rep.frame) if rep else "",
+            t=round(tr.first_t, 3), hms=timestamps.hms(tr.first_t),
+            confidence=round(tr.confidence, 3), bbox=rep.bbox if rep else None,
+            track_id=tr.track_id, plate_text=tr.plate_text or None,
+            plate_color=tr.plate_color, note=tr.label))
+    n, m = len(valid), len(with_plate)
+    if m:
+        plates = "；".join(f"{t.plate_text}（{timestamps.hms(t.first_t)}–{timestamps.hms(t.last_t)}）"
+                          for t in with_plate)
+        ans = f"追踪到 {n} 辆车并框选跟随，其中 {m} 辆识别出车牌：{plates}。"
+    else:
+        ans = f"追踪到 {n} 辆车并框选跟随；受清晰度限制未能读出车牌号。"
+    return Answer(intent="PLATE", answer=ans, evidence=evidence,
+                  confidence=round(max((t.confidence for t in valid), default=0.0), 3),
+                  caveats=caveats, plate_tracks=tracks, annotated_video=annotated_video,
+                  artifacts_dir=abs_out)
+
+
+def plate_unavailable(out_dir: str, err: Exception) -> Answer:
+    """未装 [plate] extra（或引擎不可用）时的可读降级 Answer（永不崩）。
+    与 preprocess 里 have('whisper') 缺失时的降级同款语义。"""
+    missing = getattr(err, "name", None) or str(err) or "未知依赖"
+    return Answer(
+        intent="PLATE",
+        answer=("车牌识别需要额外依赖（HyperLPR3 / OpenCV / onnxruntime）。"
+                f'请安装：pip install -e ".[plate]"（缺少：{missing}）。'),
+        confidence=0.0,
+        caveats="PLATE 依赖未安装，已跳过车牌分析；其它意图不受影响。",
+        artifacts_dir=os.path.abspath(out_dir))

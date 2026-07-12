@@ -6,7 +6,7 @@ export type TaskState =
   | 'queued' | 'downloading' | 'extracting' | 'transcribing'
   | 'analyzing' | 'assembling' | 'done' | 'error' | 'cancelled'
 
-export type IntentName = 'auto' | 'SUMMARY' | 'LOCATE' | 'MODERATE' | 'VISUAL_LOCATE'
+export type IntentName = 'auto' | 'SUMMARY' | 'LOCATE' | 'MODERATE' | 'VISUAL_LOCATE' | 'PLATE'
 
 export interface CreateTaskResponse {
   task_id: string
@@ -24,6 +24,13 @@ export interface TaskStatus {
   caveats: string
 }
 
+export interface BBox {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
 export interface EvidenceOut {
   frame: string
   frame_url: string
@@ -33,6 +40,26 @@ export interface EvidenceOut {
   similarity?: number | null
   verdict?: string | null
   note: string
+  // 仅 PLATE：空间证据
+  bbox?: BBox | null
+  track_id?: number | null
+  plate_text?: string | null
+  plate_color?: string | null
+}
+
+export interface PlateTrackOut {
+  track_id: number
+  plate_text: string
+  label: string
+  confidence: number
+  plate_color?: string | null
+  first_t: number
+  last_t: number
+  hms_range: string
+  n_frames: number
+  method: string
+  best_frame_url: string
+  caveats: string
 }
 
 export interface SummaryDetail {
@@ -52,6 +79,9 @@ export interface AnswerOut {
   video_url: string | null
   query_image_url: string | null
   grids: string[]
+  // 仅 PLATE
+  annotated_video_url: string | null
+  plate_tracks: PlateTrackOut[]
 }
 
 export interface Health {

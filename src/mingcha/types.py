@@ -1,7 +1,7 @@
 """明察的数据结构：意图、时间戳、管线配置、证据、答案，以及各分析器的
 结构化输出 schema。统一用 Pydantic，供 llm/structured.py 跨 provider 校验 LLM 返回。
 
-对应设计文档 §2。
+对应设计文档 §2；PLATE 车牌识别扩展见 docs/车牌识别-详细设计文档.md。
 """
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ class Intent(str, Enum):
     LOCATE = "LOCATE"
     MODERATE = "MODERATE"
     VISUAL_LOCATE = "VISUAL_LOCATE"
+    PLATE = "PLATE"                       # 车牌识别 + 高亮追踪（FR-5.5）
 
 
 # ---- FR-2 意图分类的 LLM 结构化输出 ----
@@ -42,6 +43,43 @@ class Plan(BaseModel):
     need_timestamps: bool
     grid_label_time: bool
     keep_audio: bool
+    frame_width: int = 640       # 抽帧宽度（PLATE 用 1280，车牌小目标；默认 640 向后兼容）
+
+
+# ---- G6 空间-时序地基（PLATE，FR-5.5）----
+class BBox(BaseModel):
+    """车牌/目标在帧内的像素框（左上角 + 宽高）。"""
+    x: int
+    y: int
+    w: int
+    h: int
+
+
+class PlateDetection(BaseModel):
+    """单帧单车牌的检测 + OCR 结果（多帧融合的原料）。"""
+    t: float                                            # G1 绝对时间
+    frame: str                                          # 来源帧文件名
+    bbox: BBox                                          # G6 空间框
+    text: str = ""                                      # 该帧 OCR 读数（未融合）
+    char_confidences: list[float] = Field(default_factory=list)  # 逐字符置信度
+    ocr_confidence: float = 0.0
+    plate_color: str | None = None
+
+
+class PlateTrack(BaseModel):
+    """一条车牌轨迹（跨帧同一车牌，多帧融合后定案）。"""
+    track_id: int
+    plate_text: str                                     # 多帧投票 + 规则约束后的车牌号
+    confidence: float = 0.0                             # 融合置信度
+    plate_color: str | None = None                      # 蓝 / 黄 / 绿(新能源) / 双层黄
+    first_t: float = 0.0                                # 首次出现（G1）
+    last_t: float = 0.0                                 # 末次出现
+    n_frames: int = 0                                   # 检测帧数（投票样本量）
+    method: str = "vote"                                # vote|rule_fixed|superres|vlm_corrected
+    detections: list[PlateDetection] = Field(default_factory=list)  # 全部检测（回写/复核）
+    caveats: str = ""                                   # 该车牌的个体局限
+    label: str = ""                                     # 展示/回写标签：车牌号，或车辆模式无牌时的「车辆N」
+    kind: str = "plate"                                 # plate=车牌轨迹 | vehicle=车辆轨迹（可能无牌）
 
 
 # ---- FR-5/FR-6 证据与答案 ----
@@ -53,6 +91,11 @@ class Evidence(BaseModel):
     similarity: float | None = None  # 仅 VISUAL_LOCATE
     verdict: str | None = None       # 仅 VISUAL_LOCATE: "same"|"similar"，供前端徽章区分同一个体/同类外观
     note: str = ""
+    # —— 仅 PLATE（FR-5.5）：空间证据 ——
+    bbox: BBox | None = None         # 车牌在代表帧的位置
+    track_id: int | None = None      # 跨帧同一车牌标识
+    plate_text: str | None = None    # 最终车牌号
+    plate_color: str | None = None   # 车牌颜色
 
 
 class Answer(BaseModel):
@@ -67,6 +110,9 @@ class Answer(BaseModel):
     confidence: float = 0.0
     caveats: str = ""               # NFR-1 采样局限；否定结论必填非空
     artifacts_dir: str = ""
+    # —— 仅 PLATE（FR-5.5）——
+    annotated_video: str | None = None                  # 高亮标注视频落盘路径
+    plate_tracks: list[PlateTrack] = Field(default_factory=list)  # 结构化车牌轨迹
 
 
 # ---- 各分析器的结构化输出 schema（供 llm.vision_structured 校验）----
@@ -99,3 +145,11 @@ class VisualHitSchema(BaseModel):
     similarity: float = 0.0
     confidence: float = 0.0
     note: str = ""
+
+
+class PlateVLMSchema(BaseModel):
+    """FR-5.5 PLATE 的 VLM 兜底纠错输出（P5.4 启用）。"""
+    plate_text: str = ""
+    plate_color: str | None = None
+    confidence: float = 0.0
+    reasoning: str = ""             # 可解释：为何这么读（规则依据）

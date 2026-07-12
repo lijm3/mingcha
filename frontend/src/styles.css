@@ -153,6 +153,17 @@ body {
 .verdict.similar { background: #422006; color: var(--warn); }
 .note { padding: 0 8px 8px; font-size: 12px; color: var(--muted); margin: 0; }
 
+/* PLATE 车牌轨迹列表 */
+.plate-list h4 { color: var(--accent); font-size: 14px; }
+.plate-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+.plate-card { background: var(--card-2); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; cursor: pointer; transition: border-color .15s; }
+.plate-card:hover { border-color: var(--accent); }
+.plate-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; }
+.plate-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 8px; }
+.plate-no { font-family: ui-monospace, "Cascadia Code", monospace; font-weight: 700; font-size: 15px; letter-spacing: 1px; color: var(--text); background: var(--card); border: 1px solid var(--line); padding: 1px 8px; border-radius: 6px; }
+.plate-color { font-size: 12px; padding: 1px 8px; border-radius: 6px; background: var(--card); color: var(--muted); }
+.method { font-size: 12px; padding: 1px 8px; border-radius: 6px; background: var(--card); color: var(--accent-2); }
+
 .caveat-banner { background: #2a230f; border: 1px solid var(--warn); border-radius: 8px; padding: 12px 14px; margin-top: 16px; }
 .caveat-banner b { color: var(--warn); }
 .caveat-banner p { margin: 6px 0 0; font-size: 13px; }

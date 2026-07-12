@@ -49,15 +49,21 @@ class PreprocessResult:
 
 # ---- ② 带时间戳抽帧 ----
 def extract_frames_timed(video: str, frames_dir: str, scene: float,
-                         fps_floor: float) -> tuple[int, str]:
+                         fps_floor: float, scale_width: int = FRAME_SCALE_WIDTH) -> tuple[int, str]:
     """一趟 ffmpeg select（同 crv 表达式）后接 metadata=print 落 pts_time。
     用 cwd=frames_dir + 相对文件名，绕开 Windows 盘符冒号在 filtergraph 里的转义地狱。
+
+    scene<=0（PLATE）关场景选择、走纯均匀抽帧（连续帧是追踪前提，§6.1）；scene>0 沿用
+    「场景切割 + 均匀采样」并集（现有 4 意图行为不变）。scale_width 默认 640，PLATE 传
+    1280（车牌是小目标，需更高分辨率）。
     返回 (raw 帧数, frames_meta.txt 路径)。"""
     os.makedirs(frames_dir, exist_ok=True)
     every_n = max(1, round(fps(video) * fps_floor))
-    vf = (f"select='gt(scene,{scene})+not(mod(n,{every_n}))',"
+    select = (f"not(mod(n,{every_n}))" if scene <= 0
+              else f"gt(scene,{scene})+not(mod(n,{every_n}))")
+    vf = (f"select='{select}',"
           f"metadata=print:file=frames_meta.txt,"
-          f"scale={FRAME_SCALE_WIDTH}:-1")
+          f"scale={scale_width}:-1")
     subprocess.run(
         ["ffmpeg", "-i", os.path.abspath(video), "-vf", vf,
          "-fps_mode", "vfr", "raw_%05d.jpg",
@@ -207,7 +213,8 @@ def run(source: str, out_dir: str, plan: Plan, *, cookies: str | None = None,
 
     # ② 带时间戳抽帧
     check_cancel()
-    n_raw, meta_path = extract_frames_timed(video, frames_dir, plan.scene, plan.fps_floor)
+    n_raw, meta_path = extract_frames_timed(video, frames_dir, plan.scene, plan.fps_floor,
+                                            scale_width=plan.frame_width)
     emit("extracting", 0.4, f"抽帧完成：{n_raw} 帧，去重中…")
 
     # ③ 解析时间戳 + 段数校验兜底（NFR-1 诚实）

@@ -34,20 +34,34 @@ def fetch_video(src: str, out_dir: str, cookies: str | None = None,
     if src.startswith(("http://", "https://")):
         if not have("yt-dlp"):
             raise RuntimeError("未找到 yt-dlp，请安装：pip install yt-dlp")
+        # --no-playlist：明察只分析单个视频；URL 常带 &list=，不加这个 yt-dlp 会
+        # 误当播放列表批量下（覆盖 source.mp4 且瞬时批量请求易触发 YouTube 反爬）。
         base = ["yt-dlp", src, "-o", dest, "--merge-output-format", "mp4",
-                "--no-warnings", "-q"]
-        _run(base)
+                "--no-playlist", "--no-warnings", "-q"]
+        # YouTube 2025 起视频流 URL 带 nsig（n 参数）JS 加密，需 JS 运行时解密，否则
+        # 只能拿到 storyboard 缩略图。yt-dlp 默认仅启用 deno，故显式指定本机可用运行时。
+        for _rt in ("deno", "node", "bun"):
+            if have(_rt):
+                base += ["--js-runtimes", _rt]
+                break
+        proc = _run(base)
         if not os.path.exists(dest) and cookies_from_browser:
-            _run(base + ["--cookies-from-browser", cookies_from_browser])
+            proc = _run(base + ["--cookies-from-browser", cookies_from_browser])
         if not os.path.exists(dest) and cookies:
-            _run(base + ["--cookies", cookies])
+            proc = _run(base + ["--cookies", cookies])
         if not os.path.exists(dest):
             # yt-dlp 可能写成了别的扩展名
             hits = sorted(glob.glob(os.path.join(out_dir, "source.*")))
             if hits:
                 dest = hits[0]
         if not os.path.exists(dest):
-            raise RuntimeError("下载失败（私有视频？试试 --cookies your_cookies.txt）")
+            # 把 yt-dlp 的真实 stderr 带出来（-q 下 error 仍进 stderr），否则报错被
+            # 静默、无从诊断（延续 FR-1.5「主动抛出可读错误」）。只取末尾几行避免刷屏。
+            detail = (proc.stderr or proc.stdout or "").strip()
+            tail = "\n".join(detail.splitlines()[-6:]) if detail else ""
+            hint = ("下载失败。私有/年龄限制视频需 --cookies-from-browser firefox "
+                    "或 --cookies 文件；被 YouTube 反爬拦截可换代理节点或带 cookies 重试")
+            raise RuntimeError(f"{hint}\nyt-dlp 报错：\n{tail}" if tail else hint)
     else:
         if not os.path.exists(src):
             raise FileNotFoundError(src)
